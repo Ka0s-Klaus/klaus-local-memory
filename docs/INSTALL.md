@@ -79,7 +79,7 @@ docker-compose up -d qdrant
 
 ```bash
 cd ~/.claude
-curl -O https://raw.githubusercontent.com/tu-repo/qdrant-claude-memory/main/install-memory-system.sh
+curl -O https://raw.githubusercontent.com/tu-repo/klaus-local-memory/main/scripts/install-memory-system.sh
 chmod +x install-memory-system.sh
 ```
 

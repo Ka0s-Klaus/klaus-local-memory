@@ -163,7 +163,7 @@ git remote add upstream https://github.com/original-repo/qdrant-claude-memory.gi
 
 ```bash
 # Validar sintaxis de Bash
-bash -n install-memory-system.sh
+bash -n scripts/install-memory-system.sh
 
 # Ejecutar todos los tests
 cd docs
@@ -180,7 +180,7 @@ bash TEST-SUITE.md
 rm -rf ~/.claude/.qdrant-config
 
 # Instalar desde tu rama
-./install-memory-system.sh
+./scripts/install-memory-system.sh
 # Seguir prompts interactivos
 
 # Verificar que funciona

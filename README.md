@@ -1,8 +1,8 @@
-# 🧠 Qdrant Memory System for Claude Code
+# 🧠 Klaus Local Memory
 
 **Sistema de memoria persistente, multi-proyecto y completamente remoto para Claude Code, almacenando decisiones, patrones y contexto en un servidor Qdrant independiente.**
 
-[![Release v1.0.0](https://img.shields.io/badge/release-v1.0.0-green.svg)](https://github.com/your-org/qdrant-claude-memory/releases/tag/v1.0.0)
+[![Release v1.0.0](https://img.shields.io/badge/release-v1.0.0-green.svg)](https://github.com/your-org/klaus-local-memory/releases/tag/v1.0.0)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Tests: 27 Passing](https://img.shields.io/badge/tests-27%20passing-brightgreen.svg)](TEST-SUITE.md)
 [![Made with: Bash + Python](https://img.shields.io/badge/made%20with-Bash%20%2B%20Python-blue.svg)](#)
@@ -176,10 +176,10 @@ No incluido en este repo (asumimos que tienes uno).
 
 ```bash
 # 1. Descargar el script
-chmod +x install-memory-system.sh
+chmod +x scripts/install-memory-system.sh
 
 # 2. Ejecutar (responde 4 preguntas)
-./install-memory-system.sh
+./scripts/install-memory-system.sh
 
 # 3. ¡Listo! Inicia Claude Code
 cd ~/your-project
@@ -209,11 +209,11 @@ claude-code
 
 ### Opción 2: Instalación Manual
 
-Para control total de cada paso, sigue **[INSTALL.md](INSTALL.md)** (15-20 minutos).
+Para control total de cada paso, sigue **[docs/INSTALL.md](docs/INSTALL.md)** (15-20 minutos).
 
 ### Opción 3: Especificación para IA
 
-Si quieres usar otra IA o entender la arquitectura, lee **[memory-system-remote-qdrant.yaml](memory-system-remote-qdrant.yaml)**.
+Si quieres usar otra IA o entender la arquitectura, lee **[scripts/memory-system-remote-qdrant.yaml](scripts/memory-system-remote-qdrant.yaml)**.
 
 ---
 
@@ -411,11 +411,11 @@ PROJECT_ID=$(~/.claude/tools/claude-mem current | grep "Project ID" | cut -d: -f
 
 | Componente | Función | Lenguaje |
 |-----------|---------|----------|
-| **install-memory-system.sh** | Instalación automática | Bash |
+| **scripts/install-memory-system.sh** | Instalación automática | Bash |
 | **load-memory-from-qdrant.sh** | Hook SessionStart | Bash |
 | **save-memory-to-qdrant.sh** | Hook PostToolUse | Bash |
 | **claude-mem** | CLI tool | Python 3 |
-| **memory-system-remote-qdrant.yaml** | Especificación | YAML |
+| **scripts/memory-system-remote-qdrant.yaml** | Especificación | YAML |
 
 ### Flujo de datos
 
