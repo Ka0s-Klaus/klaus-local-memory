@@ -1,0 +1,756 @@
+---
+name: "Remote Qdrant Memory System for Claude Code"
+version: "2.0.0"
+author: "santa@kyndryl"
+date: "2026-09-14"
+status: "specification"
+severity: "implementation-critical"
+
+# CONFIGURACIÓN REMOTA
+remote_config:
+  qdrant_host: "change-me.example.com"
+  qdrant_port: 6333
+  qdrant_api_key: "optional-if-protected"
+  collection_name: "memoria"
+  note: "Update qdrant_host to your actual remote server"
+
+# OBJETIVO
+objective: |
+  Implement a persistent, multi-project memory system that:
+  - Stores all Claude Code decisions, errors, and patterns in a REMOTE Qdrant instance
+  - Auto-loads project memory at SessionStart
+  - Auto-saves decisions at PostToolUse
+  - Supports N→∞ projects without schema changes
+  - Maintains complete isolation per project
+  - Never sends data to Anthropic servers
+  - Connects securely to remote Qdrant server
+
+# DEPENDENCIAS
+dependencies:
+  - name: "Remote Qdrant Server"
+    version: ">=1.7.0"
+    status: "must-be-accessible"
+    location: "change-me.example.com:6333"
+    validation: "curl https://change-me.example.com:6333/health"
+  
+  - name: "curl"
+    version: ">=7.0.0"
+    status: "required"
+    validation: "curl --version"
+  
+  - name: "jq"
+    version: ">=1.6"
+    status: "required"
+    validation: "jq --version"
+  
+  - name: "python3"
+    version: ">=3.8"
+    status: "required"
+    validation: "python3 --version"
+
+# COMPONENTES
+components:
+
+  # 1. CONFIGURACIÓN DE CONEXIÓN REMOTA
+  - name: "remote-config"
+    type: "setup"
+    priority: "P0"
+    description: "Set up remote Qdrant connection details"
+    
+    verification:
+      - action: "test -f ~/.claude/.qdrant-config"
+        expected_code: 0
+        timeout: 5
+      - action: "curl -s -H 'Content-Type: application/json' https://${QDRANT_HOST}:${QDRANT_PORT}/health 2>/dev/null | grep -q 'ok\\|title'"
+        expected_code: 0
+        timeout: 10
+    
+    implementation:
+      file: "~/.claude/.qdrant-config"
+      content: |
+        # Remote Qdrant Configuration
+        # Generated: 2026-09-14
+        
+        # Update these values to match your remote Qdrant server
+        export QDRANT_HOST="change-me.example.com"
+        export QDRANT_PORT="6333"
+        export QDRANT_PROTOCOL="https"  # or http if not protected
+        export QDRANT_API_KEY=""  # Leave empty if no auth required
+        export QDRANT_COLLECTION_NAME="memoria"
+        
+        # Computed
+        export QDRANT_URL="${QDRANT_PROTOCOL}://${QDRANT_HOST}:${QDRANT_PORT}"
+      
+      run_once: true
+      user_editable: true
+      critical: true
+
+  # 2. VALIDACIÓN DE CONEXIÓN
+  - name: "validate-remote-connection"
+    type: "validation"
+    priority: "P0"
+    description: "Verify connection to remote Qdrant server"
+    
+    dependencies:
+      - "remote-config"
+    
+    verification:
+      - action: "source ~/.claude/.qdrant-config && curl -s ${QDRANT_URL}/health"
+        expected_output: "ok|true|healthy"
+        timeout: 10
+    
+    implementation:
+      file: "~/.claude/scripts/validate-qdrant.sh"
+      executable: true
+      content: |
+        #!/bin/bash
+        set -e
+        
+        source ~/.claude/.qdrant-config
+        
+        echo "🔍 Validating remote Qdrant connection..."
+        echo "   Host: ${QDRANT_HOST}"
+        echo "   Port: ${QDRANT_PORT}"
+        echo "   Protocol: ${QDRANT_PROTOCOL}"
+        
+        # Test connectivity
+        if curl -s -f "${QDRANT_URL}/health" > /dev/null; then
+          echo "✅ Remote Qdrant is accessible"
+          return 0
+        else
+          echo "❌ Cannot reach Qdrant at ${QDRANT_URL}"
+          echo "   Please check:"
+          echo "   1. QDRANT_HOST is correct in ~/.claude/.qdrant-config"
+          echo "   2. QDRANT_PORT is correct (default: 6333)"
+          echo "   3. QDRANT_PROTOCOL is correct (http or https)"
+          echo "   4. Network connectivity is working"
+          return 1
+        fi
+
+  # 3. CREAR COLECCIÓN EN QDRANT REMOTO
+  - name: "create-remote-collection"
+    type: "setup"
+    priority: "P0"
+    description: "Create or verify collection exists in remote Qdrant"
+    
+    dependencies:
+      - "validate-remote-connection"
+    
+    verification:
+      - action: "source ~/.claude/.qdrant-config && curl -s ${QDRANT_URL}/collections/${QDRANT_COLLECTION_NAME}"
+        expected_output: "name|memoria"
+        timeout: 10
+    
+    implementation:
+      file: "~/.claude/scripts/init-remote-collection.sh"
+      executable: true
+      content: |
+        #!/bin/bash
+        set -e
+        
+        source ~/.claude/.qdrant-config
+        
+        echo "📦 Creating collection in remote Qdrant..."
+        
+        # Check if collection exists
+        if curl -s "${QDRANT_URL}/collections/${QDRANT_COLLECTION_NAME}" | grep -q "name"; then
+          echo "✅ Collection '${QDRANT_COLLECTION_NAME}' already exists"
+          return 0
+        fi
+        
+        echo "   Creating collection: ${QDRANT_COLLECTION_NAME}"
+        
+        # Create collection
+        curl -s -X PUT "${QDRANT_URL}/collections/${QDRANT_COLLECTION_NAME}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "vectors": {
+              "size": 384,
+              "distance": "Cosine"
+            }
+          }'
+        
+        echo ""
+        echo "✅ Collection created successfully"
+
+  # 4. HOOK SESSIONSTART (REMOTO)
+  - name: "hook-session-start"
+    type: "hook"
+    priority: "P0"
+    description: "Load memory from remote Qdrant at session start"
+    
+    dependencies:
+      - "create-remote-collection"
+    
+    verification:
+      - action: "cat ~/.claude/settings.json | jq '.hooks.SessionStart'"
+        expected_output: "load-memory-from-qdrant"
+        timeout: 5
+      - action: "test -x ~/.claude/hooks/load-memory-from-qdrant.sh"
+        expected_code: 0
+    
+    implementation:
+      file: "~/.claude/hooks/load-memory-from-qdrant.sh"
+      executable: true
+      timeout: 30
+      content: |
+        #!/bin/bash
+        set -e
+        
+        source ~/.claude/.qdrant-config
+        
+        # Generar ID único del proyecto
+        PROJECT_PATH="${PWD}"
+        PROJECT_NAME=$(basename "$PROJECT_PATH")
+        
+        PROJECT_ID=$(python3 << 'PYTHON_EOF'
+        import hashlib
+        import os
+        
+        path = os.getcwd()
+        name = os.path.basename(path)
+        project_id = hashlib.sha256(f"{name}:{path}".encode()).hexdigest()[:16]
+        print(project_id)
+        PYTHON_EOF
+        )
+        
+        # Headers
+        HEADERS="-H 'Content-Type: application/json'"
+        
+        # Add API key if configured
+        if [ -n "$QDRANT_API_KEY" ]; then
+          HEADERS="$HEADERS -H 'api-key: $QDRANT_API_KEY'"
+        fi
+        
+        echo "🧠 Loading memory for project: $PROJECT_NAME (ID: $PROJECT_ID)"
+        echo ""
+        
+        # Query remote Qdrant
+        QUERY_RESULT=$(eval "curl -s -X POST '${QDRANT_URL}/collections/${QDRANT_COLLECTION_NAME}/points/search' $HEADERS -d '{
+          \"vector\": [0.1, 0.2, 0.3],
+          \"limit\": 15,
+          \"filter\": {
+            \"must\": [
+              {
+                \"key\": \"namespace.project_id\",
+                \"match\": { \"value\": \"'${PROJECT_ID}'\" }
+              }
+            ]
+          },
+          \"with_payload\": true
+        }'")
+        
+        # Format output
+        RESULT_COUNT=$(echo "$QUERY_RESULT" | jq '.result | length' 2>/dev/null || echo "0")
+        
+        if [ "$RESULT_COUNT" -gt 0 ]; then
+          echo "## 📚 Project Memory"
+          echo "**Project:** $PROJECT_NAME"
+          echo "**Path:** $PROJECT_PATH"
+          echo "**Session:** $(date)"
+          echo ""
+          
+          echo "$QUERY_RESULT" | jq -r '.result[] | 
+            "\n### \(.payload.memory.type | ascii_upcase): \(.payload.memory.title)\n" +
+            "\(.payload.memory.content)\n" +
+            "_Created: \(.payload.temporal.created_at)_"' 2>/dev/null || true
+        else
+          echo "📝 No previous memory found for this project"
+          echo "**Project:** $PROJECT_NAME"
+          echo "**Path:** $PROJECT_PATH"
+          echo "**Session:** $(date)"
+        fi
+
+  # 5. HOOK POSTTOOLUSE (REMOTO)
+  - name: "hook-post-tool-use"
+    type: "hook"
+    priority: "P0"
+    description: "Save decisions to remote Qdrant after tool execution"
+    
+    dependencies:
+      - "create-remote-collection"
+    
+    verification:
+      - action: "cat ~/.claude/settings.json | jq '.hooks.PostToolUse'"
+        expected_output: "save-memory-to-qdrant"
+        timeout: 5
+      - action: "test -x ~/.claude/hooks/save-memory-to-qdrant.sh"
+        expected_code: 0
+    
+    implementation:
+      file: "~/.claude/hooks/save-memory-to-qdrant.sh"
+      executable: true
+      async: true
+      timeout: 10
+      content: |
+        #!/bin/bash
+        set -e
+        
+        source ~/.claude/.qdrant-config
+        
+        HOOK_INPUT=$(cat)
+        
+        # Generar Project ID
+        PROJECT_ID=$(python3 << 'EOF'
+        import hashlib
+        import os
+        project_id = hashlib.sha256(f"{os.path.basename(os.getcwd())}:{os.getcwd()}".encode()).hexdigest()[:16]
+        print(project_id)
+        EOF
+        )
+        
+        TOOL_NAME=$(echo "$HOOK_INPUT" | jq -r '.tool_name')
+        TOOL_OUTPUT=$(echo "$HOOK_INPUT" | jq -r '.tool_output // empty' | head -c 500)
+        TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        POINT_ID=$(python3 -c "import uuid; print(int(uuid.uuid4().int % 2**31))")
+        
+        # Headers
+        HEADERS="-H 'Content-Type: application/json'"
+        if [ -n "$QDRANT_API_KEY" ]; then
+          HEADERS="$HEADERS -H 'api-key: $QDRANT_API_KEY'"
+        fi
+        
+        # Save to remote Qdrant
+        eval "curl -s -X PUT '${QDRANT_URL}/collections/${QDRANT_COLLECTION_NAME}/points' $HEADERS -d '{
+          \"points\": [{
+            \"id\": '${POINT_ID}',
+            \"vector\": [0.1, 0.2, 0.3],
+            \"payload\": {
+              \"namespace\": {
+                \"project_id\": \"'${PROJECT_ID}'\",
+                \"project_path\": \"'${PWD}'\"
+              },
+              \"memory\": {
+                \"type\": \"action\",
+                \"title\": \"[${TOOL_NAME}] ${TIMESTAMP}\",
+                \"content\": \"${TOOL_OUTPUT}\",
+                \"severity\": \"medium\"
+              },
+              \"temporal\": {
+                \"created_at\": \"'${TIMESTAMP}'\"
+              }
+            }
+          }]
+        }'" > /dev/null 2>&1
+        
+        echo "✅ Memory saved to remote Qdrant"
+
+  # 6. CONFIGURACIÓN EN settings.json
+  - name: "claude-settings-config"
+    type: "configuration"
+    priority: "P0"
+    description: "Register hooks in ~/.claude/settings.json"
+    
+    verification:
+      - action: "test -f ~/.claude/settings.json"
+        expected_code: 0
+      - action: "jq '.hooks.SessionStart | length' ~/.claude/settings.json"
+        expected_output: "[1-9]"
+    
+    implementation:
+      file: "~/.claude/settings.json"
+      merge: true
+      content: |
+        {
+          "hooks": {
+            "SessionStart": [
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "$HOME/.claude/hooks/load-memory-from-qdrant.sh",
+                    "timeout": 30
+                  }
+                ]
+              }
+            ],
+            "PostToolUse": [
+              {
+                "matcher": "",
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "$HOME/.claude/hooks/save-memory-to-qdrant.sh",
+                    "timeout": 10,
+                    "async": true
+                  }
+                ]
+              }
+            ]
+          }
+        }
+
+  # 7. CLI TOOL PARA GESTIÓN
+  - name: "memory-cli-tool"
+    type: "utility"
+    priority: "P1"
+    description: "CLI for memory management against remote Qdrant"
+    
+    implementation:
+      file: "~/.claude/tools/claude-mem"
+      executable: true
+      language: "python"
+      content: |
+        #!/usr/bin/env python3
+        """
+        Claude Memory CLI - Query and manage memories in remote Qdrant
+        """
+        import argparse
+        import requests
+        import json
+        import os
+        import hashlib
+        from datetime import datetime
+        from pathlib import Path
+        
+        # Load config
+        config_file = Path.home() / ".claude" / ".qdrant-config"
+        if not config_file.exists():
+            print("❌ Config file not found: ~/.claude/.qdrant-config")
+            exit(1)
+        
+        config = {}
+        with open(config_file) as f:
+            for line in f:
+                if line.startswith("export "):
+                    key, value = line.replace("export ", "").split("=", 1)
+                    config[key] = value.strip().strip('"')
+        
+        QDRANT_URL = config.get("QDRANT_URL", "http://localhost:6333")
+        QDRANT_COLLECTION = config.get("QDRANT_COLLECTION_NAME", "memoria")
+        QDRANT_API_KEY = config.get("QDRANT_API_KEY", "")
+        
+        headers = {"Content-Type": "application/json"}
+        if QDRANT_API_KEY:
+            headers["api-key"] = QDRANT_API_KEY
+        
+        def get_project_id(project_path=None):
+            """Generate project ID from current or specified path"""
+            if project_path is None:
+                project_path = os.getcwd()
+            
+            name = os.path.basename(project_path)
+            project_id = hashlib.sha256(f"{name}:{project_path}".encode()).hexdigest()[:16]
+            return project_id
+        
+        def query_memory(project_id, limit=10):
+            """Query memories for a specific project"""
+            try:
+                result = requests.post(
+                    f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points/search",
+                    json={
+                        "vector": [0.1] * 384,
+                        "limit": limit,
+                        "filter": {"must": [{"key": "namespace.project_id", "match": {"value": project_id}}]},
+                        "with_payload": True
+                    },
+                    headers=headers,
+                    timeout=10
+                )
+                return result.json()
+            except Exception as e:
+                print(f"❌ Connection error: {e}")
+                return None
+        
+        def list_projects():
+            """List all projects with memories"""
+            try:
+                result = requests.post(
+                    f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points/search",
+                    json={
+                        "vector": [0.1] * 384,
+                        "limit": 10000,
+                        "with_payload": True
+                    },
+                    headers=headers,
+                    timeout=30
+                )
+                
+                projects = {}
+                for point in result.json().get("result", []):
+                    project_id = point["payload"]["namespace"]["project_id"]
+                    project_path = point["payload"]["namespace"]["project_path"]
+                    
+                    if project_id not in projects:
+                        projects[project_id] = {
+                            "path": project_path,
+                            "count": 0
+                        }
+                    projects[project_id]["count"] += 1
+                
+                return projects
+            except Exception as e:
+                print(f"❌ Connection error: {e}")
+                return None
+        
+        def delete_project_memory(project_id):
+            """Delete all memories for a project"""
+            try:
+                result = requests.post(
+                    f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}/points/delete",
+                    json={
+                        "filter": {
+                            "must": [{"key": "namespace.project_id", "match": {"value": project_id}}]
+                        }
+                    },
+                    headers=headers,
+                    timeout=10
+                )
+                return result.json()
+            except Exception as e:
+                print(f"❌ Connection error: {e}")
+                return None
+        
+        def main():
+            parser = argparse.ArgumentParser(description="Claude Code Memory Management (Remote Qdrant)")
+            subparsers = parser.add_subparsers(dest="command")
+            
+            # Query command
+            query_parser = subparsers.add_parser("query", help="Query memories for a project")
+            query_parser.add_argument("--project", help="Project ID (default: current project)")
+            query_parser.add_argument("--limit", type=int, default=10, help="Number of results")
+            
+            # List projects
+            subparsers.add_parser("list", help="List all projects with memories")
+            
+            # Delete command
+            delete_parser = subparsers.add_parser("delete", help="Delete all memories for a project")
+            delete_parser.add_argument("--project", required=True, help="Project ID to delete")
+            
+            # Stats command
+            subparsers.add_parser("stats", help="Show memory statistics")
+            
+            # Current project command
+            subparsers.add_parser("current", help="Show current project ID")
+            
+            args = parser.parse_args()
+            
+            if args.command == "query":
+                project_id = args.project or get_project_id()
+                print(f"📊 Querying memories for project: {project_id}\n")
+                
+                result = query_memory(project_id, args.limit)
+                if result:
+                    count = len(result.get("result", []))
+                    print(f"Found {count} memories:\n")
+                    
+                    for point in result.get("result", []):
+                        payload = point["payload"]
+                        memory = payload["memory"]
+                        temporal = payload["temporal"]
+                        
+                        print(f"  📌 {memory['type'].upper()}: {memory['title']}")
+                        print(f"     Content: {memory['content'][:80]}...")
+                        print(f"     Created: {temporal['created_at']}")
+                        print()
+            
+            elif args.command == "list":
+                print("📋 Projects with memories:\n")
+                projects = list_projects()
+                
+                if projects:
+                    for project_id, info in sorted(projects.items()):
+                        print(f"  {project_id}")
+                        print(f"    Path: {info['path']}")
+                        print(f"    Memories: {info['count']}")
+                        print()
+                else:
+                    print("  No projects found")
+            
+            elif args.command == "delete":
+                print(f"🗑️  Deleting memories for project: {args.project}")
+                result = delete_project_memory(args.project)
+                if result:
+                    print("✅ Memories deleted")
+            
+            elif args.command == "current":
+                project_id = get_project_id()
+                print(f"Current project ID: {project_id}")
+                print(f"Path: {os.getcwd()}")
+            
+            elif args.command == "stats":
+                print("📈 Memory Statistics:\n")
+                projects = list_projects()
+                
+                if projects:
+                    total_memories = sum(p["count"] for p in projects.values())
+                    total_projects = len(projects)
+                    avg_per_project = total_memories / total_projects if total_projects > 0 else 0
+                    
+                    print(f"  Total projects: {total_projects}")
+                    print(f"  Total memories: {total_memories}")
+                    print(f"  Avg per project: {avg_per_project:.1f}")
+                else:
+                    print("  No data")
+            
+            else:
+                parser.print_help()
+        
+        if __name__ == "__main__":
+            main()
+
+# SECUENCIA DE INSTALACIÓN
+installation_sequence:
+  - step: 1
+    name: "Create directories"
+    action: "bash"
+    command: "mkdir -p ~/.claude/{hooks,scripts,tools,.backup}"
+    critical: true
+  
+  - step: 2
+    name: "Edit remote config"
+    action: "edit"
+    component: "remote-config"
+    file: "~/.claude/.qdrant-config"
+    instructions: |
+      Edit this file and set:
+      - QDRANT_HOST to your remote Qdrant server hostname
+      - QDRANT_PORT (usually 6333)
+      - QDRANT_PROTOCOL (http or https)
+      - QDRANT_API_KEY (if your server requires authentication)
+    critical: true
+  
+  - step: 3
+    name: "Validate remote connection"
+    action: "run"
+    component: "validate-remote-connection"
+    script: "~/.claude/scripts/validate-qdrant.sh"
+    must_succeed: true
+  
+  - step: 4
+    name: "Create remote collection"
+    action: "run"
+    component: "create-remote-collection"
+    script: "~/.claude/scripts/init-remote-collection.sh"
+    must_succeed: true
+  
+  - step: 5
+    name: "Create directories"
+    action: "bash"
+    command: "mkdir -p ~/.claude/hooks"
+    critical: true
+  
+  - step: 6
+    name: "Deploy SessionStart hook"
+    action: "create"
+    component: "hook-session-start"
+    file: "~/.claude/hooks/load-memory-from-qdrant.sh"
+    make_executable: true
+  
+  - step: 7
+    name: "Deploy PostToolUse hook"
+    action: "create"
+    component: "hook-post-tool-use"
+    file: "~/.claude/hooks/save-memory-to-qdrant.sh"
+    make_executable: true
+  
+  - step: 8
+    name: "Backup current settings.json"
+    action: "bash"
+    command: "cp ~/.claude/settings.json ~/.claude/.backup/settings.json.$(date +%s) 2>/dev/null || true"
+  
+  - step: 9
+    name: "Update settings.json with hooks"
+    action: "merge"
+    component: "claude-settings-config"
+    file: "~/.claude/settings.json"
+    method: "jq"
+    must_preserve_existing: true
+  
+  - step: 10
+    name: "Deploy CLI tool"
+    action: "create"
+    component: "memory-cli-tool"
+    file: "~/.claude/tools/claude-mem"
+    make_executable: true
+  
+  - step: 11
+    name: "Verify installation"
+    action: "verify"
+    checks:
+      - "test -f ~/.claude/.qdrant-config"
+      - "test -x ~/.claude/hooks/load-memory-from-qdrant.sh"
+      - "test -x ~/.claude/hooks/save-memory-to-qdrant.sh"
+      - "test -x ~/.claude/tools/claude-mem"
+      - "grep -q SessionStart ~/.claude/settings.json"
+
+# VALIDACIÓN FINAL
+final_validation:
+  - step: 1
+    name: "Test config connection"
+    action: "bash"
+    command: "source ~/.claude/.qdrant-config && curl -s ${QDRANT_URL}/health"
+    expected: "ok|true"
+  
+  - step: 2
+    name: "Start new Claude Code session"
+    action: "manual"
+    instruction: |
+      Open a new terminal and run:
+      $ cd ~/some-project
+      $ claude-code
+      
+      Expected: SessionStart hook fires automatically and loads project memory
+  
+  - step: 3
+    name: "Execute a simple command"
+    action: "manual"
+    instruction: |
+      In Claude Code, run:
+      $ ls -la
+      
+      Expected: PostToolUse hook fires automatically and saves to remote Qdrant
+  
+  - step: 4
+    name: "Query memories"
+    action: "bash"
+    command: "~/.claude/tools/claude-mem query"
+    expected: "Found.*memories|No previous memory"
+  
+  - step: 5
+    name: "List all projects"
+    action: "bash"
+    command: "~/.claude/tools/claude-mem list"
+    expected: "Projects with memories"
+
+# NOTAS PARA IA
+instructions_for_ai_model: |
+  CRITICAL RULES FOR IMPLEMENTATION:
+  
+  1. REMOTE CONFIGURATION IS REQUIRED
+     - Do NOT proceed without user updating ~/.claude/.qdrant-config
+     - Verify QDRANT_HOST points to actual remote server
+     - Do NOT assume defaults will work
+  
+  2. STEP 2 IS MANUAL - CANNOT SKIP
+     - User must edit ~/.claude/.qdrant-config
+     - Wait for confirmation before proceeding
+     - Test connection (step 3) BEFORE creating collection
+  
+  3. DO NOT SKIP VERIFICATION STEPS
+     Each step has verification. If verification fails: STOP
+     - Report exact error
+     - Do not invent fixes
+     - Ask user to troubleshoot
+  
+  4. MERGE, DO NOT OVERWRITE settings.json
+     - Use jq to merge, not replace
+     - Command: jq -s '.[0] * .[1]' old.json new.json > merged.json
+     - Or use Python merge if available
+  
+  5. ALL HOOKS MUST SOURCE CONFIG
+     - Every hook must run: source ~/.claude/.qdrant-config
+     - This loads QDRANT_* variables from central config
+     - If config is wrong: ALL hooks fail
+  
+  6. ASYNC HOOK (PostToolUse)
+     - Must have "async: true"
+     - Should not block main thread
+     - Failures should not crash Claude Code
+  
+  7. IF INSTALLATION FAILS
+     Report:
+     - Failed step number
+     - Actual error message (not interpretation)
+     - Which verification failed
+     - Rollback to backup: ~/.claude/.backup/settings.json.*
