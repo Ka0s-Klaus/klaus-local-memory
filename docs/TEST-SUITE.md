@@ -1,3 +1,7 @@
+---
+tags: [proyecto/klaus-local-memory, tipo/reporte, qa/pruebas]
+---
+
 # 🧪 Suite de Pruebas: Sistema de Memoria Remota Qdrant
 
 **Versión:** 2.0.0  

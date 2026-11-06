@@ -1,3 +1,7 @@
+---
+tags: [proyecto/klaus-local-memory, tipo/guia, memoria/qdrant]
+---
+
 # 🤝 Contribuyendo a Qdrant Memory System
 
 ¡Gracias por tu interés en contribuir! Este documento proporciona las directrices y pasos para contribuir al proyecto.
@@ -231,7 +235,7 @@ validate_config() {
 - Usar Markdown
 - Incluir ejemplos prácticos
 - Mantener TOC actualizado
-- Actualizar CHANGELOG.md
+- Actualizar [[CHANGELOG|CHANGELOG.md]]
 
 ### Python (si es necesario)
 
@@ -278,7 +282,7 @@ validate_config() {
 
 ### 🧪 Testing
 
-- [ ] Expand TEST-SUITE.md
+- [ ] Expand [[TEST-SUITE|TEST-SUITE.md]]
 - [ ] Automated CI/CD tests
 - [ ] Load testing
 

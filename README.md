@@ -1,10 +1,14 @@
+---
+tags: [proyecto/klaus-local-memory, tipo/referencia, memoria/qdrant]
+---
+
 # 🧠 Klaus Local Memory
 
 **Sistema de memoria persistente, multi-proyecto y completamente remoto para Claude Code, almacenando decisiones, patrones y contexto en un servidor Qdrant independiente.**
 
 [![Release v1.0.0](https://img.shields.io/badge/release-v1.0.0-green.svg)](https://github.com/your-org/klaus-local-memory/releases/tag/v1.0.0)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests: 27 Passing](https://img.shields.io/badge/tests-27%20passing-brightgreen.svg)](TEST-SUITE.md)
+[![Tests: 27 Passing](https://img.shields.io/badge/tests-27%20passing-brightgreen.svg)]([[TEST-SUITE|TEST-SUITE.md]])
 [![Made with: Bash + Python](https://img.shields.io/badge/made%20with-Bash%20%2B%20Python-blue.svg)](#)
 
 ---

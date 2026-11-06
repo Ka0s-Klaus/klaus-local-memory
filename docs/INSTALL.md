@@ -1,3 +1,7 @@
+---
+tags: [proyecto/klaus-local-memory, tipo/guia, infra/instalacion]
+---
+
 # 📘 Guía de Instalación: Sistema de Memoria Qdrant
 
 **Versión:** 1.0.0  

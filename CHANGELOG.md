@@ -1,3 +1,7 @@
+---
+tags: [proyecto/klaus-local-memory, tipo/release, memoria/qdrant]
+---
+
 # Changelog - Klaus Local Memory
 
 Todos los cambios notables en este proyecto serán documentados en este archivo.
@@ -26,8 +30,8 @@ y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   - Validación de certificados SSL/TLS
 - **Documentación completa**
   - README.md con guía de inicio rápido
-  - INSTALL.md con pasos detallados
-  - TEST-SUITE.md con 27 pruebas incluidas
+  - [[INSTALL|INSTALL.md]] con pasos detallados
+  - [[TEST-SUITE|TEST-SUITE.md]] con 27 pruebas incluidas
   - memory-system-remote-qdrant.yaml con especificación técnica
 - **27 pruebas** cubriendo:
   - Configuración (4 tests)
